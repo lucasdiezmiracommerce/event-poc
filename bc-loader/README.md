@@ -1,78 +1,53 @@
-# event-poc
+# EventPOC BigCommerce Loader
 
-A lightweight React proof-of-concept for injecting a custom React UI into a BigCommerce product page using a CDN-hosted bundle.
+This script dynamically detects **event products** on a BigCommerce store and mounts a React application, while hiding native product options for event products.
 
-This project demonstrates how to dynamically replace or extend BigCommerce’s native product option UI without modifying theme source files directly.
+## Features
 
----
+* Hides default product options for event products.
+* Dynamically loads React and ReactDOM from a CDN.
+* Mounts a custom React component from a specified CDN URL.
+* Logs internal operations (optional).
 
-## Overview
+## Installation
 
-The integration works by:
+1. Copy the content from bc-loader.js.
+2. Go to your **BigCommerce theme** Script Manager
+3. Create a new `<script>` into the head.
+4. Copy and paste script.
+    -  ONCE READY FOR PRODUCTION: Replace the `CDNurl` constant with the URL of your CDN React app bundle
+5. Save script.
 
-1. Loading React and ReactDOM dynamically.
-2. Creating a mount node inside the BigCommerce product container.
-3. Loading a compiled JavaScript bundle from a CDN.
-4. Calling a global `mount()` function from that bundle to render the React application.
+```javascript
+const CDNurl = "https://cdn.jsdelivr.net/gh/lucasdiezmiracommerce/event-poc@main/index-min.js"
+```
 
----
+3. Optionally, enable logs for debugging:
 
-## Installation Workflow
+```javascript
+var ENABLE_LOGS = true;
+```
 
-1. Build your React bundle into a single JavaScript file (for example `index-min.js`).
-2. Upload that file to your preferred CDN.
-3. Copy the public CDN URL.
-4. Insert that URL into your BigCommerce script loader.
-5. Add the loader to BigCommerce using Script Manager or directly in the theme.
+## How It Works
 
----
+1. **Style Injection**: Adds a `<style>` tag to hide `.productView-details.product-options`.
+2. **DOM Detection**: Waits for the DOM to load and finds the `.productView` element.
+3. **Product Category Check**: Checks if the product belongs to the "Events" category.
+4. **React Mounting**:
 
-## Bundle Contract
+   * Creates a `<div>` with `id="rhw"` as the mount point.
+   * Dynamically loads React and ReactDOM from a CDN.
+   * Loads the custom EventPOC React bundle and mounts it on the page.
+5. **Fallback**: If the product is **not an event**, the original options are restored.
 
-Deployed bundle must expose a global object named in this case `EventPOC` on the `window` object.
+## Dependencies
 
-Example structure:
+* React 18
+* ReactDOM 18
 
-    window.EventPOC = {
-      mount: function (el) {
-        ReactDOM.createRoot(el).render(React.createElement(HelloWorld));
-      }
-    };
+These are dynamically loaded via:
 
----
-
-## Requirements
-
-- The object name must be exactly `EventPOC` for this specific scenario, it can be whatever you want.
-- The object must contain a `mount()` method.
-- The `mount()` method receives the DOM element where the React app will render.
-- Your React component must exist in the same bundle.
-- React and ReactDOM are loaded before your bundle runs.
-
----
-
-## Runtime Behavior
-
-When the loader runs on the storefront:
-
-1. A script gets created with the loader and attached to the Head of the BC Site for detection of Event Product
-2. Detection happens by looking for the following Custom Field: `_product-type` : `event`
-2. If ok, it proceeds.
-2. The native BigCommerce product options section is hidden.
-2. A mount node is created inside the product container.
-3. Your CDN-hosted bundle is loaded.
-4. The loader calls `window.EventPOC.mount(mountNode)`.
-5. Your React UI renders in place of the default product options.
-
----
-
-## Purpose
-
-This repository demonstrates:
-
-- Injecting React apps into BigCommerce
-- Hosting React bundles on a CDN
-- Overriding BigCommerce product option rendering
-- Keeping storefront logic separate from theme source code
-
----
+```javascript
+const rUrl = "https://unpkg.com/react@18/umd/react.production.min.js"
+const rdUrl = "https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"
+```
