@@ -1,1 +1,1 @@
-<script>console.log("hola headless")</script>
+console.log("hola headless")
