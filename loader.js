@@ -1,7 +1,4 @@
 (function () {
-  /* =======================
-     SAFETY / DEBUG
-  ======================= */
   if (window.__EVENT_POC_LOADER__) return;
   window.__EVENT_POC_LOADER__ = true;
 
@@ -10,16 +7,15 @@
     if (ENABLE_LOGS) console.log.apply(console, arguments);
   }
 
-  log("[EventPOC] Loader initialized");
+  log("[EventPOC] Loader start");
 
-  /* =======================
-     CONSTANTS / STATE
-  ======================= */
   var SLOT_SELECTOR = 'div.group\\/product-detail-form';
+
   var mounted = false;
   var mounting = false;
   var currentMountNode = null;
   var lastPath = null;
+  var retryTimer = null;
 
   /* =======================
      GRAPHQL
@@ -43,19 +39,19 @@
             }
           }
         `,
-        variables: { path: path }
+        variables: { path }
       })
     })
-      .then(function (r) { return r.json(); })
-      .then(function (j) { return j?.data?.site?.route?.node || null; })
-      .catch(function () { return null; });
+      .then(r => r.json())
+      .then(j => j?.data?.site?.route?.node || null)
+      .catch(() => null);
   }
 
   /* =======================
      SCRIPT LOADER
   ======================= */
   function loadScript(src) {
-    return new Promise(function (resolve) {
+    return new Promise(resolve => {
       var s = document.createElement("script");
       s.src = src;
       s.async = true;
@@ -70,12 +66,8 @@
     }
 
     return loadScript("https://unpkg.com/react@18/umd/react.production.min.js")
-      .then(function () {
-        return loadScript("https://unpkg.com/react-dom@18/umd/react-dom.production.min.js");
-      })
-      .then(function () {
-        return loadScript("https://cdn.jsdelivr.net/gh/lucasdiezmiracommerce/event-poc@main/index-min.js");
-      });
+      .then(() => loadScript("https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"))
+      .then(() => loadScript("https://cdn.jsdelivr.net/gh/lucasdiezmiracommerce/event-poc@main/index-min.js"));
   }
 
   /* =======================
@@ -88,9 +80,7 @@
       window.EventPOC?.unmount?.(currentMountNode);
     } catch (_) {}
 
-    if (currentMountNode && currentMountNode.parentNode) {
-      currentMountNode.parentNode.removeChild(currentMountNode);
-    }
+    currentMountNode?.remove();
 
     mounted = false;
     mounting = false;
@@ -101,21 +91,21 @@
 
   function mount(slot, product) {
     if (mounted || mounting) return;
+
     mounting = true;
 
-    ensureDeps().then(function () {
+    ensureDeps().then(() => {
       if (mounted) return;
 
       currentMountNode = document.createElement("div");
       slot.appendChild(currentMountNode);
 
-      window.EventPOC.mount(currentMountNode, {
-        product: product
-      });
+      window.EventPOC.mount(currentMountNode, { product });
 
       mounted = true;
       mounting = false;
 
+      stopRetry();
       log("[EventPOC] Mounted");
     });
   }
@@ -126,21 +116,17 @@
   function evaluate() {
     var path = window.location.pathname;
 
-    if (path === lastPath && mounted) return;
-    lastPath = path;
-
-    log("[EventPOC] Evaluating", path);
-
     var slot = document.querySelector(SLOT_SELECTOR);
     if (!slot) {
-      log("[EventPOC] Slot not found yet");
+      startRetry();
       return;
     }
 
-    fetchProduct(path).then(function (product) {
-      log("[EventPOC] Product fetched", product);
+    if (path === lastPath && mounted) return;
+    lastPath = path;
 
-      if (!product || !product.sku || !product.sku.startsWith("EVT_")) {
+    fetchProduct(path).then(product => {
+      if (!product || !product.sku?.startsWith("EVT_")) {
         unmount();
         return;
       }
@@ -150,7 +136,25 @@
   }
 
   /* =======================
-     SPA NAVIGATION HOOKS
+     RETRY LOOP (refresh fix)
+  ======================= */
+  function startRetry() {
+    if (retryTimer || mounted) return;
+
+    retryTimer = setInterval(evaluate, 300);
+    log("[EventPOC] Retry loop started");
+  }
+
+  function stopRetry() {
+    if (!retryTimer) return;
+
+    clearInterval(retryTimer);
+    retryTimer = null;
+    log("[EventPOC] Retry loop stopped");
+  }
+
+  /* =======================
+     SPA NAVIGATION
   ======================= */
   function hookHistory(method) {
     var original = history[method];
@@ -177,13 +181,9 @@
   }
 
   /* =======================
-     MAKESWIFT HYDRATION WATCH
+     MAKESWIFT HYDRATION
   ======================= */
-  var observer = new MutationObserver(function () {
-    if (!mounted) evaluate();
-  });
-
-  observer.observe(document.documentElement, {
+  new MutationObserver(evaluate).observe(document.documentElement, {
     childList: true,
     subtree: true
   });
