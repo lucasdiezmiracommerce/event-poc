@@ -4,6 +4,8 @@
     if (ENABLE_LOGS) console.log.apply(console, arguments);
   }
 
+  log("[EventPOC] loader executing");
+
   var SLOT_SELECTOR = '[data-mfe-slot="event-poc"]';
   var mounted = false;
   var currentMountNode = null;
@@ -31,9 +33,9 @@
         variables: { path: path }
       })
     })
-    .then(r => r.json())
-    .then(j => j?.data?.site?.route?.node || null)
-    .catch(() => null);
+      .then(r => r.json())
+      .then(j => j?.data?.site?.route?.node || null)
+      .catch(() => null);
   }
 
   function loadScript(src) {
@@ -75,13 +77,18 @@
     if (path === lastPath) return;
     lastPath = path;
 
+    log("[EventPOC] Evaluating path", path);
+
     var slot = document.querySelector(SLOT_SELECTOR);
     if (!slot) {
+      log("[EventPOC] Slot not found");
       unmount();
       return;
     }
 
     fetchProduct(path).then(function (product) {
+      log("[EventPOC] Product fetched", product);
+
       if (!product || !product.sku || !product.sku.startsWith("EVT_")) {
         unmount();
         return;
@@ -112,5 +119,6 @@
   hookHistory("replaceState");
   window.addEventListener("popstate", evaluate);
 
-  document.addEventListener("DOMContentLoaded", evaluate);
+  evaluate();
+
 })();
