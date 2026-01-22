@@ -17,10 +17,11 @@
      CONFIG / STATE
   ======================= */
   var HOST_SELECTOR = 'div.group\\/product-detail-form';
+  var CONTAINER_ID = 'event-poc-root';
 
   var mounted = false;
   var mounting = false;
-  var mountNode = null;
+  var container = null;
   var lastPath = null;
 
   /* =======================
@@ -28,14 +29,10 @@
   ======================= */
   function afterHydration(fn) {
     if (document.readyState !== "loading") {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(fn);
-      });
+      requestAnimationFrame(() => requestAnimationFrame(fn));
     } else {
       document.addEventListener("DOMContentLoaded", () => {
-        requestAnimationFrame(() => {
-          requestAnimationFrame(fn);
-        });
+        requestAnimationFrame(() => requestAnimationFrame(fn));
       });
     }
   }
@@ -111,6 +108,29 @@
   }
 
   /* =======================
+     CONTAINER (OWNED NODE)
+  ======================= */
+  function ensureContainer() {
+    var host = document.querySelector(HOST_SELECTOR);
+    if (!host) {
+      log("[EventPOC] Host not found");
+      return null;
+    }
+
+    container = document.getElementById(CONTAINER_ID);
+    if (container) return container;
+
+    container = document.createElement("div");
+    container.id = CONTAINER_ID;
+    container.setAttribute("data-event-poc-container", "true");
+
+    host.parentNode.insertBefore(container, host.nextSibling);
+
+    log("[EventPOC] Container injected as sibling");
+    return container;
+  }
+
+  /* =======================
      MOUNT / UNMOUNT
   ======================= */
   function unmount() {
@@ -122,37 +142,31 @@
     log("[EventPOC] Unmounting");
 
     try {
-      window.EventPOC?.unmount?.(mountNode);
+      window.EventPOC?.unmount?.(container);
     } catch (e) {
       log("[EventPOC] Unmount error", e);
     }
 
-    mountNode?.remove();
-
     mounted = false;
     mounting = false;
-    mountNode = null;
   }
 
-  function mount(host, product) {
+  function mount(product) {
     if (mounted || mounting) {
       log("[EventPOC] Mount skipped (mounted or mounting)");
       return;
     }
 
+    container = ensureContainer();
+    if (!container) return;
+
     mounting = true;
-    log("[EventPOC] Mounting into host:", host);
+    log("[EventPOC] Mounting into owned container");
 
     ensureDeps().then(() => {
       if (mounted) return;
 
-      mountNode = document.createElement("div");
-      mountNode.setAttribute("data-event-poc-root", "true");
-
-      host.appendChild(mountNode);
-
-      log("[EventPOC] Calling EventPOC.mount");
-      window.EventPOC.mount(mountNode, { product });
+      window.EventPOC.mount(container, { product });
 
       mounted = true;
       mounting = false;
@@ -167,24 +181,16 @@
   function evaluate(reason) {
     var path = window.location.pathname;
 
-    log("[EventPOC] Evaluate triggered", {
+    log("[EventPOC] Evaluate", {
       reason,
       path,
       mounted
     });
 
-    var host = document.querySelector(HOST_SELECTOR);
-    if (!host) {
-      log("[EventPOC] Host not found yet");
-      return;
-    }
-
-    if (path === lastPath && mounted) {
-      log("[EventPOC] Same path and already mounted, skipping");
-      return;
-    }
-
+    if (path === lastPath && mounted) return;
     lastPath = path;
+
+    ensureContainer();
 
     fetchProduct(path).then(product => {
       if (!product || !product.sku || !product.sku.startsWith("EVT_")) {
@@ -193,7 +199,7 @@
         return;
       }
 
-      mount(host, product);
+      mount(product);
     });
   }
 
@@ -204,7 +210,7 @@
     var original = history[method];
     history[method] = function () {
       var ret = original.apply(this, arguments);
-      log("[EventPOC] history." + method + " called");
+      log("[EventPOC] history." + method);
       setTimeout(() => evaluate(method), 0);
       return ret;
     };
@@ -212,19 +218,16 @@
 
   hookHistory("pushState");
   hookHistory("replaceState");
-  window.addEventListener("popstate", () => {
-    log("[EventPOC] popstate");
-    evaluate("popstate");
-  });
+  window.addEventListener("popstate", () => evaluate("popstate"));
 
   /* =======================
-     REACT RERENDER DETECTION
+     CONTAINER RESILIENCE
   ======================= */
   new MutationObserver(() => {
-    if (mounted && !document.contains(mountNode)) {
-      log("[EventPOC] Mount node removed by React, remounting");
+    if (mounted && !document.getElementById(CONTAINER_ID)) {
+      log("[EventPOC] Container removed, remounting");
       mounted = false;
-      evaluate("mutation-remount");
+      evaluate("container-lost");
     }
   }).observe(document.body, {
     childList: true,
