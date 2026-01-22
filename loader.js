@@ -1,3 +1,4 @@
+<script>
 (function () {
   if (window.__EVENT_POC_LOADER__) return;
   window.__EVENT_POC_LOADER__ = true;
@@ -7,15 +8,26 @@
     if (ENABLE_LOGS) console.log.apply(console, arguments);
   }
 
-  log("[EventPOC] Loader start");
-
-  var SLOT_SELECTOR = 'div.group\\/product-detail-form';
+  var HOST_SELECTOR = 'div.group\\/product-detail-form';
+  var CONTAINER_ID = 'event-poc-root';
 
   var mounted = false;
   var mounting = false;
-  var currentMountNode = null;
+  var container = null;
   var lastPath = null;
-  var retryTimer = null;
+
+  /* =======================
+     HYDRATION AWARE READY
+  ======================= */
+  function afterHydration(cb) {
+    if (document.readyState !== "loading") {
+      requestAnimationFrame(() => requestAnimationFrame(cb));
+    } else {
+      document.addEventListener("DOMContentLoaded", () => {
+        requestAnimationFrame(() => requestAnimationFrame(cb));
+      });
+    }
+  }
 
   /* =======================
      GRAPHQL
@@ -71,41 +83,57 @@
   }
 
   /* =======================
+     CONTAINER (OWNED NODE)
+  ======================= */
+  function ensureContainer() {
+    var host = document.querySelector(HOST_SELECTOR);
+    if (!host) return null;
+
+    container = document.getElementById(CONTAINER_ID);
+    if (container) return container;
+
+    container = document.createElement("div");
+    container.id = CONTAINER_ID;
+
+    // Insert AFTER React-controlled node
+    host.parentNode.insertBefore(container, host.nextSibling);
+
+    log("[EventPOC] Container injected");
+    return container;
+  }
+
+  /* =======================
      MOUNT / UNMOUNT
   ======================= */
   function unmount() {
     if (!mounted) return;
 
     try {
-      window.EventPOC?.unmount?.(currentMountNode);
+      window.EventPOC?.unmount?.(container);
     } catch (_) {}
-
-    currentMountNode?.remove();
 
     mounted = false;
     mounting = false;
-    currentMountNode = null;
 
     log("[EventPOC] Unmounted");
   }
 
-  function mount(slot, product) {
+  function mount(product) {
     if (mounted || mounting) return;
+
+    container = ensureContainer();
+    if (!container) return;
 
     mounting = true;
 
     ensureDeps().then(() => {
       if (mounted) return;
 
-      currentMountNode = document.createElement("div");
-      slot.appendChild(currentMountNode);
-
-      window.EventPOC.mount(currentMountNode, { product });
+      window.EventPOC.mount(container, { product });
 
       mounted = true;
       mounting = false;
 
-      stopRetry();
       log("[EventPOC] Mounted");
     });
   }
@@ -115,15 +143,10 @@
   ======================= */
   function evaluate() {
     var path = window.location.pathname;
-
-    var slot = document.querySelector(SLOT_SELECTOR);
-    if (!slot) {
-      startRetry();
-      return;
-    }
-
     if (path === lastPath && mounted) return;
     lastPath = path;
+
+    ensureContainer();
 
     fetchProduct(path).then(product => {
       if (!product || !product.sku?.startsWith("EVT_")) {
@@ -131,26 +154,8 @@
         return;
       }
 
-      mount(slot, product);
+      mount(product);
     });
-  }
-
-  /* =======================
-     RETRY LOOP (refresh fix)
-  ======================= */
-  function startRetry() {
-    if (retryTimer || mounted) return;
-
-    retryTimer = setInterval(evaluate, 300);
-    log("[EventPOC] Retry loop started");
-  }
-
-  function stopRetry() {
-    if (!retryTimer) return;
-
-    clearInterval(retryTimer);
-    retryTimer = null;
-    log("[EventPOC] Retry loop stopped");
   }
 
   /* =======================
@@ -170,27 +175,20 @@
   window.addEventListener("popstate", evaluate);
 
   /* =======================
-     DOM READY
+     RESILIENCE (React RERENDER)
   ======================= */
-  function onReady(fn) {
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", fn);
-    } else {
-      fn();
+  new MutationObserver(() => {
+    if (mounted && !document.getElementById(CONTAINER_ID)) {
+      log("[EventPOC] Container lost, re-injecting");
+      mounted = false;
+      evaluate();
     }
-  }
-
-  /* =======================
-     MAKESWIFT HYDRATION
-  ======================= */
-  new MutationObserver(evaluate).observe(document.documentElement, {
-    childList: true,
-    subtree: true
-  });
+  }).observe(document.body, { childList: true, subtree: true });
 
   /* =======================
      BOOT
   ======================= */
-  onReady(evaluate);
+  afterHydration(evaluate);
 
 })();
+</script>
