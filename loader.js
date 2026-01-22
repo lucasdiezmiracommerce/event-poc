@@ -1,5 +1,9 @@
 <script>
   (function () {
+
+  if (window.__EVENTPOC_LOADED__) return;
+  window.__EVENTPOC_LOADED__ = true;
+
   var ENABLE_LOGS = false;
 
   function log() {
