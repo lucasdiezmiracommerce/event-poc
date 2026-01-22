@@ -1,4 +1,3 @@
-<script>
 (function () {
   if (window.__EVENT_POC_LOADER__) {
     console.log("[EventPOC] Loader already initialized, skipping");
@@ -243,4 +242,3 @@
   });
 
 })();
-</script>
