@@ -1,6 +1,9 @@
 <script>
 (function () {
-  if (window.__EVENT_POC_LOADER__) return;
+  if (window.__EVENT_POC_LOADER__) {
+    console.log("[EventPOC] Loader already initialized, skipping");
+    return;
+  }
   window.__EVENT_POC_LOADER__ = true;
 
   var ENABLE_LOGS = true;
@@ -8,23 +11,31 @@
     if (ENABLE_LOGS) console.log.apply(console, arguments);
   }
 
+  log("[EventPOC] Loader started");
+
+  /* =======================
+     CONFIG / STATE
+  ======================= */
   var HOST_SELECTOR = 'div.group\\/product-detail-form';
-  var CONTAINER_ID = 'event-poc-root';
 
   var mounted = false;
   var mounting = false;
-  var container = null;
+  var mountNode = null;
   var lastPath = null;
 
   /* =======================
-     HYDRATION AWARE READY
+     HYDRATION-SAFE READY
   ======================= */
-  function afterHydration(cb) {
+  function afterHydration(fn) {
     if (document.readyState !== "loading") {
-      requestAnimationFrame(() => requestAnimationFrame(cb));
+      requestAnimationFrame(() => {
+        requestAnimationFrame(fn);
+      });
     } else {
       document.addEventListener("DOMContentLoaded", () => {
-        requestAnimationFrame(() => requestAnimationFrame(cb));
+        requestAnimationFrame(() => {
+          requestAnimationFrame(fn);
+        });
       });
     }
   }
@@ -33,6 +44,8 @@
      GRAPHQL
   ======================= */
   function fetchProduct(path) {
+    log("[EventPOC] Fetching product for path:", path);
+
     return fetch("/graphql", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -55,27 +68,42 @@
       })
     })
       .then(r => r.json())
-      .then(j => j?.data?.site?.route?.node || null)
-      .catch(() => null);
+      .then(j => {
+        var product = j?.data?.site?.route?.node || null;
+        log("[EventPOC] GraphQL response:", product);
+        return product;
+      })
+      .catch(err => {
+        log("[EventPOC] GraphQL error", err);
+        return null;
+      });
   }
 
   /* =======================
      SCRIPT LOADER
   ======================= */
   function loadScript(src) {
+    log("[EventPOC] Loading script:", src);
+
     return new Promise(resolve => {
       var s = document.createElement("script");
       s.src = src;
       s.async = true;
-      s.onload = resolve;
+      s.onload = () => {
+        log("[EventPOC] Script loaded:", src);
+        resolve();
+      };
       document.head.appendChild(s);
     });
   }
 
   function ensureDeps() {
     if (window.React && window.ReactDOM && window.EventPOC) {
+      log("[EventPOC] Dependencies already available");
       return Promise.resolve();
     }
+
+    log("[EventPOC] Ensuring dependencies");
 
     return loadScript("https://unpkg.com/react@18/umd/react.production.min.js")
       .then(() => loadScript("https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"))
@@ -83,78 +111,89 @@
   }
 
   /* =======================
-     CONTAINER (OWNED NODE)
-  ======================= */
-  function ensureContainer() {
-    var host = document.querySelector(HOST_SELECTOR);
-    if (!host) return null;
-
-    container = document.getElementById(CONTAINER_ID);
-    if (container) return container;
-
-    container = document.createElement("div");
-    container.id = CONTAINER_ID;
-
-    // Insert AFTER React-controlled node
-    host.parentNode.insertBefore(container, host.nextSibling);
-
-    log("[EventPOC] Container injected");
-    return container;
-  }
-
-  /* =======================
      MOUNT / UNMOUNT
   ======================= */
   function unmount() {
-    if (!mounted) return;
+    if (!mounted) {
+      log("[EventPOC] Unmount skipped (not mounted)");
+      return;
+    }
+
+    log("[EventPOC] Unmounting");
 
     try {
-      window.EventPOC?.unmount?.(container);
-    } catch (_) {}
+      window.EventPOC?.unmount?.(mountNode);
+    } catch (e) {
+      log("[EventPOC] Unmount error", e);
+    }
+
+    mountNode?.remove();
 
     mounted = false;
     mounting = false;
-
-    log("[EventPOC] Unmounted");
+    mountNode = null;
   }
 
-  function mount(product) {
-    if (mounted || mounting) return;
-
-    container = ensureContainer();
-    if (!container) return;
+  function mount(host, product) {
+    if (mounted || mounting) {
+      log("[EventPOC] Mount skipped (mounted or mounting)");
+      return;
+    }
 
     mounting = true;
+    log("[EventPOC] Mounting into host:", host);
 
     ensureDeps().then(() => {
       if (mounted) return;
 
-      window.EventPOC.mount(container, { product });
+      mountNode = document.createElement("div");
+      mountNode.setAttribute("data-event-poc-root", "true");
+
+      host.appendChild(mountNode);
+
+      log("[EventPOC] Calling EventPOC.mount");
+      window.EventPOC.mount(mountNode, { product });
 
       mounted = true;
       mounting = false;
 
-      log("[EventPOC] Mounted");
+      log("[EventPOC] Mounted successfully");
     });
   }
 
   /* =======================
      CORE EVALUATION
   ======================= */
-  function evaluate() {
+  function evaluate(reason) {
     var path = window.location.pathname;
-    if (path === lastPath && mounted) return;
+
+    log("[EventPOC] Evaluate triggered", {
+      reason,
+      path,
+      mounted
+    });
+
+    var host = document.querySelector(HOST_SELECTOR);
+    if (!host) {
+      log("[EventPOC] Host not found yet");
+      return;
+    }
+
+    if (path === lastPath && mounted) {
+      log("[EventPOC] Same path and already mounted, skipping");
+      return;
+    }
+
     lastPath = path;
 
-    ensureContainer();
-
     fetchProduct(path).then(product => {
-      if (!product || !product.sku?.startsWith("EVT_")) {
+      if (!product || !product.sku || !product.sku.startsWith("EVT_")) {
+        log("[EventPOC] Not an EVT product, unmounting");
         unmount();
         return;
       }
 
-      mount(product);
+      mount(host, product);
     });
   }
 
@@ -165,30 +204,40 @@
     var original = history[method];
     history[method] = function () {
       var ret = original.apply(this, arguments);
-      setTimeout(evaluate, 0);
+      log("[EventPOC] history." + method + " called");
+      setTimeout(() => evaluate(method), 0);
       return ret;
     };
   }
 
   hookHistory("pushState");
   hookHistory("replaceState");
-  window.addEventListener("popstate", evaluate);
+  window.addEventListener("popstate", () => {
+    log("[EventPOC] popstate");
+    evaluate("popstate");
+  });
 
   /* =======================
-     RESILIENCE (React RERENDER)
+     REACT RERENDER DETECTION
   ======================= */
   new MutationObserver(() => {
-    if (mounted && !document.getElementById(CONTAINER_ID)) {
-      log("[EventPOC] Container lost, re-injecting");
+    if (mounted && !document.contains(mountNode)) {
+      log("[EventPOC] Mount node removed by React, remounting");
       mounted = false;
-      evaluate();
+      evaluate("mutation-remount");
     }
-  }).observe(document.body, { childList: true, subtree: true });
+  }).observe(document.body, {
+    childList: true,
+    subtree: true
+  });
 
   /* =======================
      BOOT
   ======================= */
-  afterHydration(evaluate);
+  afterHydration(() => {
+    log("[EventPOC] After hydration");
+    evaluate("initial");
+  });
 
 })();
 </script>
